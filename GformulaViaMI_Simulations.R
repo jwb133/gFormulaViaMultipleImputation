@@ -22,7 +22,7 @@ mice.impute.uniABB <- function(y,ry,x = NULL, wy = NULL, ...) {
 }
 
 #function to perform gformula via MI
-gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData) {
+gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData,maxit=5) {
   
   n <- nrow(obsData)
   
@@ -62,7 +62,7 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData) {
       
       #use mice to impute missing data
       intermediateImps <- mice(obsData, m=M, defaultMethod = c("norm", "logreg", "polyreg", "polr"),
-                               printFlag = FALSE)
+                               printFlag = FALSE, maxit=maxit)
 
       #now impute potential outcomes
       imputedDatasets <- vector(mode = "list", length = M)
@@ -126,7 +126,7 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData) {
 
 #function to perform gformula MI simulations
 gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE, 
-                          missingData=FALSE, missingProp=0.5, progress=TRUE) {
+                          missingData=FALSE, missingProp=0.5, progress=TRUE,maxit=5) {
 
   miEst <- array(0, dim=c(nSim,3))
   miVar <- array(0, dim=c(nSim,3))
@@ -160,7 +160,7 @@ gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE,
     }
     
     gformMIResult <- gformulaViaMI(obsData=obsData,M=M,l0ABB=l0ABB,
-                                   missingData=missingData)
+                                   missingData=missingData,maxit=maxit)
     
     miEst[sim,] <- gformMIResult$miEst
     miVar[sim,] <- gformMIResult$miVarEst
@@ -236,8 +236,14 @@ missingProps <- c(0.05,0.10,0.25,0.50)
 missingMiceSims <- vector("list", length(missingProps))
 for (i in 1:length(missingProps)) {
   print(paste("Missingness proportion=",missingProps[i],sep=""))
-  missingMiceSims[[i]] <- gformulaMISim(nSim=numSims,M=50,missingData=TRUE,missingProp=missingProps[i],
-                              progress=TRUE)
+  if (missingProps[i]==0.5) {
+    #more iterations needed in mice for missing data imputation with 50% missingness
+    missingMiceSims[[i]] <- gformulaMISim(nSim=numSims,M=50,missingData=TRUE,missingProp=missingProps[i],
+                                          progress=FALSE,maxit=50)  
+  } else {
+    missingMiceSims[[i]] <- gformulaMISim(nSim=numSims,M=50,missingData=TRUE,missingProp=missingProps[i],
+                              progress=FALSE)
+  }
 }
 
 resTable <- array(0, dim=c(length(missingProps),6))
