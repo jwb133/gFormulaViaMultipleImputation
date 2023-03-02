@@ -3,6 +3,7 @@
 expit <- function(x) exp(x)/(1+exp(x))
 
 library(mice)
+library(gFormulaMI)
 
 #define a function which performs univariate approximate Bayesian bootstrap imputation
 #code follows mice.impute.sample with required modification
@@ -26,20 +27,6 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData,maxit=5) {
   
   n <- nrow(obsData)
   
-  #create blank dataset with treatment indicators set as per desired regime
-  syntheticDataBlank <- rbind(obsData, obsData)
-  #syntheticDataBlank[,c("l1", "l2", "y")] <- NA
-  syntheticDataBlank[,] <- NA
-  syntheticDataBlank[1:n,"a0"] <- 0
-  syntheticDataBlank[1:n,"a1"] <- 0
-  syntheticDataBlank[1:n,"a2"] <- 0
-  syntheticDataBlank[(n+1):(2*n),"a0"] <- 1
-  syntheticDataBlank[(n+1):(2*n),"a1"] <- 1
-  syntheticDataBlank[(n+1):(2*n),"a2"] <- 1
-  
-  predMat <- make.predictorMatrix(obsData)
-  predMat[,] <- lower.tri(predMat)
-  
   if (l0ABB==TRUE) {
     #use approximate Bayesian bootstrap for L0 imputation
     methodVal <- c("uniABB",rep("norm",ncol(obsData)-1))
@@ -47,92 +34,52 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData,maxit=5) {
     methodVal <- c(rep("norm",ncol(obsData)))
   }
   
-  #we repeat until all variance estimates are positive
-  miVarEst <- c(0,0,0)
-  impEsts <- array(0, dim=c(M,3))
-  impVars <- array(0, dim=c(M,3))
-  #integer to record attempt number
-  attempt <- 1
+  #we repeat until variance estimate is positive
+  #save seed so we can restore if we have to increase number of imps
+  startSeed <- .Random.seed
+  currentM <- 0
+  miVarEst <- 0
   
-  while(sum(miVarEst<=0)>0) {
+  while(miVarEst<=0) {
+    
+    #add an additional M imputations to what was used previously
+    currentM <- currentM + M
+    set.seed(startSeed)
   
     if (missingData==TRUE) {
-      #impute any missing data first
-      
-      
       #use mice to impute missing data
-      intermediateImps <- mice(obsData, m=M, defaultMethod = c("norm", "logreg", "polyreg", "polr"),
+      intermediateImps <- mice(obsData, m=currentM, defaultMethod = c("norm", "logreg", "polyreg", "polr"),
                                printFlag = FALSE, maxit=maxit)
 
-      #now impute potential outcomes
-      imputedDatasets <- vector(mode = "list", length = M)
-      for (i in 1:M) {
-        #impute data in synthetic part using mice, with m=1
-        inputData <- rbind(complete(intermediateImps,action=i),
-                             syntheticDataBlank)
-        
-        imps <- mice(data=inputData,method=methodVal, predictorMatrix = predMat, m=1,
-                     maxit=1, printFlag = FALSE)
-
-        imputedDatasets[[i]] <- complete(imps, action=1)
-        #extract just the synthetic part
-        imputedDatasets[[i]] <- imputedDatasets[[i]][(n+1):(3*n),]
-        
-      }
+      imps <- gFormulaImpute(intermediateImps,M=currentM,trtVars=c("a0","a1","a2"),
+                             trtRegimes=list(c(0,0,0),c(1,1,1)),
+                             method=methodVal)
+      
     } else {
       #setup without any regular missing data
-      inputData <- rbind(obsData,syntheticDataBlank)
-      imps <- mice(inputData, m=M, method=methodVal, predictorMatrix = predMat, maxit=1, printFlag = FALSE)
+      imps <- gFormulaImpute(obsData,M=currentM,trtVars=c("a0","a1","a2"),
+                             trtRegimes=list(c(0,0,0),c(1,1,1)),
+                              method=methodVal)
     }
     
-    for (i in 1:M) {
-      if (missingData==TRUE) {
-        impData <-  imputedDatasets[[i]]
-      } else {
-        impData <- complete(imps,action=i)
-        #extract just the synthetic part
-        impData <- impData[(n+1):(3*n),]
-      }
-      
-      #analyse it
-      impEsts[i,1] <- mean(impData$y[impData$a0==0])
-      impVars[i,1] <- var(impData$y[impData$a0==0])/n
-      impEsts[i,2] <- mean(impData$y[impData$a0==1])
-      impVars[i,2] <- var(impData$y[impData$a0==1])/n
-      impEsts[i,3] <- impEsts[i,2] - impEsts[i,1]
-      impVars[i,3] <- impVars[i,1] + impVars[i,2]
-      
-    }
-
-    if (attempt==1) {
-      finalImpEsts <- impEsts
-      finalVars <- impVars
-      attempt <- attempt + 1
-    } else {
-      finalImpEsts <- rbind(finalImpEsts, impEsts)
-      finalVars <- rbind(finalVars, impVars)
-      attempt <- attempt + 1
-    }
-    
-    Vhat <- colMeans(finalVars)
-    Bhat <- diag(var(finalImpEsts))
-    miVarEst <- (1+1/nrow(finalImpEsts))*Bhat - Vhat
-    
-    
+    #analyse imputed datasets
+    fits <- with(imps, lm(y~factor(regime)))
+    pooled <- syntheticPool(fits)
+    miVarEst <- pooled[2,4]
   }
     
-  list(miEst=colMeans(finalImpEsts),miVarEst=miVarEst,M=nrow(finalImpEsts),Bhat=Bhat,Vhat=Vhat)
+  list(miEst=pooled[2,1],miVarEst=pooled[2,4],M=currentM,Bhat=pooled[2,3],Vhat=pooled[2,2])
 }
 
 #function to perform gformula MI simulations
 gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE, 
                           missingData=FALSE, missingProp=0.5, progress=TRUE,maxit=5) {
 
-  miEst <- array(0, dim=c(nSim,3))
-  miVar <- array(0, dim=c(nSim,3))
-  Bhat <- array(0, dim=c(nSim,3))
-  Vhat <- array(0, dim=c(nSim,3))
-  MRequired <- array(0, dim=c(nSim))
+  miEst <- array(0, dim=nSim)
+  miVar <- array(0, dim=nSim)
+  Bhat <- array(0, dim=nSim)
+  Vhat <- array(0, dim=nSim)
+  MRequired <- array(0, dim=nSim)
   
   for (sim in 1:nSim) {
     
@@ -162,11 +109,11 @@ gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE,
     gformMIResult <- gformulaViaMI(obsData=obsData,M=M,l0ABB=l0ABB,
                                    missingData=missingData,maxit=maxit)
     
-    miEst[sim,] <- gformMIResult$miEst
-    miVar[sim,] <- gformMIResult$miVarEst
+    miEst[sim] <- gformMIResult$miEst
+    miVar[sim] <- gformMIResult$miVarEst
     MRequired[sim] <- gformMIResult$M
-    Bhat[sim,] <- gformMIResult$Bhat
-    Vhat[sim,] <- gformMIResult$Vhat
+    Bhat[sim] <- gformMIResult$Bhat
+    Vhat[sim] <- gformMIResult$Vhat
   
   }
   
@@ -175,7 +122,7 @@ gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE,
 }
 
 #specify number of simulations to use throughout
-numSims <- 10000
+numSims <- 10
 
 set.seed(738355)
 mVals <- c(5,10,25,50,100)
@@ -191,17 +138,17 @@ for (i in 1:length(mVals)) {
   #initial M
   resTable[[i,1]] <- mVals[i]
   #mean treatment effect
-  resTable[[i,2]] <- round(mean(mSims[[i]]$miEst[,3]),3) - 3
+  resTable[[i,2]] <- round(mean(mSims[[i]]$miEst),3) - 3
   #empirical SD
-  resTable[[i,3]] <- round(sd(mSims[[i]]$miEst[,3]),3)
+  resTable[[i,3]] <- round(sd(mSims[[i]]$miEst),3)
   #mean SD estimate
-  resTable[[i,4]] <- round(mean(sqrt(mSims[[i]]$miVar[,3])),3)
+  resTable[[i,4]] <- round(mean(sqrt(mSims[[i]]$miVar)),3)
   #CI coverage
-  tdf <- (mSims[[i]]$MRequired-1)*(1-(mSims[[i]]$MRequired*mSims[[i]]$Vhat[,3])/((mSims[[i]]$MRequired+1)*mSims[[i]]$Bhat[,3]))^2
-  resTable[[i,5]] <- round(100*mean(1*((mSims[[i]]$miEst[,3]-qt(0.975,df=tdf)*sqrt(mSims[[i]]$miVar[,3])<3) &
-                               (mSims[[i]]$miEst[,3]+qt(0.975,df=tdf)*sqrt(mSims[[i]]$miVar[,3])>3))),1)
-  resTable[[i,6]] <- round(100*mean(1*((mSims[[i]]$miEst[,3]-1.96*sqrt(mSims[[i]]$miVar[,3])<3) &
-                                         (mSims[[i]]$miEst[,3]+1.96*sqrt(mSims[[i]]$miVar[,3])>3))),1)
+  tdf <- (mSims[[i]]$MRequired-1)*(1-(mSims[[i]]$MRequired*mSims[[i]]$Vhat)/((mSims[[i]]$MRequired+1)*mSims[[i]]$Bhat))^2
+  resTable[[i,5]] <- round(100*mean(1*((mSims[[i]]$miEst-qt(0.975,df=tdf)*sqrt(mSims[[i]]$miVar)<3) &
+                               (mSims[[i]]$miEst+qt(0.975,df=tdf)*sqrt(mSims[[i]]$miVar)>3))),1)
+  resTable[[i,6]] <- round(100*mean(1*((mSims[[i]]$miEst-1.96*sqrt(mSims[[i]]$miVar)<3) &
+                                         (mSims[[i]]$miEst+1.96*sqrt(mSims[[i]]$miVar)>3))),1)
   #mean number of actual imputations performed
   resTable[[i,7]] <- round(mean(mSims[[i]]$MRequired),1)
   #max number of actual imputations performed
@@ -218,16 +165,16 @@ xtable(resTable, digits=c(0,0,3,3,3,1,1,1,0))
 #approximate Bayesian bootstrap, at M=50
 set.seed(738355)
 abbSim <- gformulaMISim(nSim=numSims,M=50,progress=FALSE,l0ABB=TRUE)
-mean(abbSim$miEst[,3])-3
-sd(abbSim$miEst[,3])
-mean(abbSim$miVar[,3]^0.5)
-tdf <- (abbSim$MRequired-1)*(1-(abbSim$MRequired*abbSim$Vhat[,3])/((abbSim$MRequired+1)*abbSim$Bhat[,3]))^2
+mean(abbSim$miEst)-3
+sd(abbSim$miEst)
+mean(abbSim$miVar^0.5)
+tdf <- (abbSim$MRequired-1)*(1-(abbSim$MRequired*abbSim$Vhat)/((abbSim$MRequired+1)*abbSim$Bhat))^2
 #Raghu df
-100*mean(1*((abbSim$miEst[,3]-qt(0.975,df=tdf)*sqrt(abbSim$miVar[,3])<3) &
-                    (abbSim$miEst[,3]+qt(0.975,df=tdf)*sqrt(abbSim$miVar[,3])>3)))
+100*mean(1*((abbSim$miEst-qt(0.975,df=tdf)*sqrt(abbSim$miVar)<3) &
+                    (abbSim$miEst+qt(0.975,df=tdf)*sqrt(abbSim$miVar)>3)))
 #N(0,1)
-100*mean(1*((abbSim$miEst[,3]-1.96*sqrt(abbSim$miVar[,3])<3) &
-              (abbSim$miEst[,3]+1.96*sqrt(abbSim$miVar[,3])>3)))
+100*mean(1*((abbSim$miEst-1.96*sqrt(abbSim$miVar)<3) &
+              (abbSim$miEst+1.96*sqrt(abbSim$miVar)>3)))
 
 
 #now with missing data with different proportions of missing data MCAR
@@ -252,17 +199,17 @@ for (i in 1:length(missingProps)) {
   #missingness proportion
   resTable[[i,1]] <- missingProps[i]
   #mean treatment effect
-  resTable[[i,2]] <- round(mean(missingMiceSims[[i]]$miEst[,3]),3) - 3
+  resTable[[i,2]] <- round(mean(missingMiceSims[[i]]$miEst),3) - 3
   #empirical SD
-  resTable[[i,3]] <- round(sd(missingMiceSims[[i]]$miEst[,3]),3)
+  resTable[[i,3]] <- round(sd(missingMiceSims[[i]]$miEst),3)
   #mean SD estimate
-  resTable[[i,4]] <- round(mean(sqrt(missingMiceSims[[i]]$miVar[,3])),3)
+  resTable[[i,4]] <- round(mean(sqrt(missingMiceSims[[i]]$miVar)),3)
   #CI coverage
-  tdf <- (missingMiceSims[[i]]$MRequired-1)*(1-(missingMiceSims[[i]]$MRequired*missingMiceSims[[i]]$Vhat[,3])/((missingMiceSims[[i]]$MRequired+1)*missingMiceSims[[i]]$Bhat[,3]))^2
-  resTable[[i,5]] <- round(100*mean(1*((missingMiceSims[[i]]$miEst[,3]-qt(0.975,df=tdf)*sqrt(missingMiceSims[[i]]$miVar[,3])<3) &
-                                         (missingMiceSims[[i]]$miEst[,3]+qt(0.975,df=tdf)*sqrt(missingMiceSims[[i]]$miVar[,3])>3))),1)
-  resTable[[i,6]] <- round(100*mean(1*((missingMiceSims[[i]]$miEst[,3]-1.96*sqrt(missingMiceSims[[i]]$miVar[,3])<3) &
-                                         (missingMiceSims[[i]]$miEst[,3]+1.96*sqrt(missingMiceSims[[i]]$miVar[,3])>3))),1)
+  tdf <- (missingMiceSims[[i]]$MRequired-1)*(1-(missingMiceSims[[i]]$MRequired*missingMiceSims[[i]]$Vhat)/((missingMiceSims[[i]]$MRequired+1)*missingMiceSims[[i]]$Bhat))^2
+  resTable[[i,5]] <- round(100*mean(1*((missingMiceSims[[i]]$miEst-qt(0.975,df=tdf)*sqrt(missingMiceSims[[i]]$miVar)<3) &
+                                         (missingMiceSims[[i]]$miEst+qt(0.975,df=tdf)*sqrt(missingMiceSims[[i]]$miVar)>3))),1)
+  resTable[[i,6]] <- round(100*mean(1*((missingMiceSims[[i]]$miEst-1.96*sqrt(missingMiceSims[[i]]$miVar)<3) &
+                                         (missingMiceSims[[i]]$miEst+1.96*sqrt(missingMiceSims[[i]]$miVar)>3))),1)
   #median number of actual imputations performed
   #resTable[[i,6]] <- round(mean(missingMiceSims[[i]]$MRequired),1)
   #max number of actual imputations performed
