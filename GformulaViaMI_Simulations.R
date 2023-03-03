@@ -44,8 +44,8 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData,maxit=5) {
     
     #add an additional M imputations to what was used previously
     currentM <- currentM + M
-    set.seed(startSeed)
-  
+    .Random.seed <- startSeed
+
     if (missingData==TRUE) {
       #use mice to impute missing data
       intermediateImps <- mice(obsData, m=currentM, defaultMethod = c("norm", "logreg", "polyreg", "polr"),
@@ -53,19 +53,23 @@ gformulaViaMI <- function(obsData, M=100,l0ABB=FALSE,missingData,maxit=5) {
 
       imps <- gFormulaImpute(intermediateImps,M=currentM,trtVars=c("a0","a1","a2"),
                              trtRegimes=list(c(0,0,0),c(1,1,1)),
-                             method=methodVal)
+                             method=methodVal, silent=TRUE)
       
     } else {
       #setup without any regular missing data
       imps <- gFormulaImpute(obsData,M=currentM,trtVars=c("a0","a1","a2"),
                              trtRegimes=list(c(0,0,0),c(1,1,1)),
-                              method=methodVal)
+                              method=methodVal,silent=TRUE)
     }
     
     #analyse imputed datasets
     fits <- with(imps, lm(y~factor(regime)))
-    pooled <- syntheticPool(fits)
-    miVarEst <- pooled[2,4]
+    try({pooled <- syntheticPool(fits)})
+    if (exists("pooled")==TRUE) {
+      miVarEst <- pooled[2,4]
+    } else {
+      miVarEst <- 0
+    }
   }
     
   list(miEst=pooled[2,1],miVarEst=pooled[2,4],M=currentM,Bhat=pooled[2,3],Vhat=pooled[2,2])
@@ -122,7 +126,7 @@ gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE,
 }
 
 #specify number of simulations to use throughout
-numSims <- 10
+numSims <- 100
 
 set.seed(738355)
 mVals <- c(5,10,25,50,100)
