@@ -126,7 +126,7 @@ gformulaMISim <- function(nSim=1000,M=100,n=500, l0ABB=FALSE,
 }
 
 #specify number of simulations to use throughout
-numSims <- 100
+numSims <- 10000
 
 set.seed(738355)
 mVals <- c(5,10,25,50,100)
@@ -166,6 +166,24 @@ colnames(resTable) <- c("M", "Bias", "Emp. SE", "Est. SE", "Raghu df 95% CI","Z 
 library(xtable)
 xtable(resTable, digits=c(0,0,3,3,3,1,1,1,0))
 
+# resulted in:
+# % latex table generated in R 4.2.2 by xtable 1.8-4 package
+# % Wed Mar  8 03:45:47 2023
+# \begin{table}[ht]
+# \centering
+# \begin{tabular}{rrrrrrrrr}
+# \hline
+# & M & Bias & Emp. SE & Est. SE & Raghu df 95\% CI & Z 95\% CI & Mean M & Max M \\ 
+# \hline
+# 1 & 5 & 0.002 & 0.244 & 0.238 & 99.7 & 87.1 & 5.6 & 15 \\ 
+# 2 & 10 & -0.007 & 0.233 & 0.223 & 98.3 & 89.1 & 10.2 & 30 \\ 
+# 3 & 25 & 0.002 & 0.223 & 0.219 & 95.5 & 92.7 & 25.0 & 25 \\ 
+# 4 & 50 & 0.002 & 0.221 & 0.219 & 94.9 & 93.7 & 50.0 & 50 \\ 
+# 5 & 100 & -0.003 & 0.219 & 0.219 & 95.0 & 94.6 & 100.0 & 100 \\ 
+# \hline
+# \end{tabular}
+# \end{table}
+
 #approximate Bayesian bootstrap, at M=50
 set.seed(738355)
 abbSim <- gformulaMISim(nSim=numSims,M=50,progress=FALSE,l0ABB=TRUE)
@@ -180,6 +198,25 @@ tdf <- (abbSim$MRequired-1)*(1-(abbSim$MRequired*abbSim$Vhat)/((abbSim$MRequired
 100*mean(1*((abbSim$miEst-1.96*sqrt(abbSim$miVar)<3) &
               (abbSim$miEst+1.96*sqrt(abbSim$miVar)>3)))
 
+# results from this chunk:
+# > #approximate Bayesian bootstrap, at M=50
+#   > set.seed(738355)
+# > abbSim <- gformulaMISim(nSim=numSims,M=50,progress=FALSE,l0ABB=TRUE)
+# > mean(abbSim$miEst)-3
+# [1] -0.001460614
+# > sd(abbSim$miEst)
+# [1] 0.2220345
+# > mean(abbSim$miVar^0.5)
+# [1] 0.2193811
+# > tdf <- (abbSim$MRequired-1)*(1-(abbSim$MRequired*abbSim$Vhat)/((abbSim$MRequired+1)*abbSim$Bhat))^2
+# > #Raghu df
+#   > 100*mean(1*((abbSim$miEst-qt(0.975,df=tdf)*sqrt(abbSim$miVar)<3) &
+#                   +                     (abbSim$miEst+qt(0.975,df=tdf)*sqrt(abbSim$miVar)>3)))
+# [1] 94.91
+# > #N(0,1)
+#   > 100*mean(1*((abbSim$miEst-1.96*sqrt(abbSim$miVar)<3) &
+#                   +               (abbSim$miEst+1.96*sqrt(abbSim$miVar)>3)))
+# [1] 93.82
 
 #now with missing data with different proportions of missing data MCAR
 set.seed(738355)
@@ -224,3 +261,19 @@ resTable
 colnames(resTable) <- c("\\pi", "Bias", "Emp. SE", "Est. SE", "Raghu df 95% CI","Z 95% CI")
 xtable(resTable, digits=c(0,2,3,3,3,1,1))
 
+# resulted in:
+# % latex table generated in R 4.2.2 by xtable 1.8-4 package
+# % Mon Mar 13 12:11:16 2023
+# \begin{table}[ht]
+# \centering
+# \begin{tabular}{rrrrrrr}
+# \hline
+# & $\backslash$pi & Bias & Emp. SE & Est. SE & Raghu df 95\% CI & Z 95\% CI \\ 
+# \hline
+# 1 & 0.05 & 0.000 & 0.226 & 0.225 & 94.9 & 93.8 \\ 
+# 2 & 0.10 & -0.005 & 0.232 & 0.232 & 95.2 & 94.2 \\ 
+# 3 & 0.25 & -0.010 & 0.260 & 0.258 & 95.0 & 94.1 \\ 
+# 4 & 0.50 & -0.013 & 0.357 & 0.361 & 95.3 & 94.5 \\ 
+# \hline
+# \end{tabular}
+# \end{table}
