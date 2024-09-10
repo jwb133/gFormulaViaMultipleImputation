@@ -1,7 +1,7 @@
 #------------------------------------------------------------------------------------------------------------
 # R code accompanying "G-formula for causal inference via multiple imputation" 
 # Author: Emily Granger
-# Date last modified: 09/11/2023
+# Date last modified: 22/08/2024
 
 #This script includes analysis code for the illustrative example of the use of the G-formula via MI approach.
 #The analysis investigates the effects of DNase and hypertonic saline used in combination compared to the use
@@ -13,8 +13,8 @@
 
 #Code is provided for the following analyses: 
 
-# 1a analysis on a complete dataset using the gFormulaMI package
-# 1b analysis on a complete dataset using the gfoRmula package
+# 1a analysis on a complete cases using the gFormulaMI package
+# 1b analysis on a complete cases using the gfoRmula package
 # 2a analysis with missing data handled using multiple imputation (via the gFormulaMI package)
 # 2b analysis with missing data handled using complete case analysis (via the gfoRmula package)
 #-----------------------------------------------------------------------------------------------------------
@@ -35,7 +35,11 @@ load(".../analysis_dat.RData")
 # 0. Description of the data
 #-----------------------------------------------------------------------------------------------------------
 
-#analysis_dat.RData is a workspace that includes two dataframes: dat_wide and dat_long
+#analysis_dat.RData is a workspace that includes four dataframes: 
+# (1) dat_wide (data on all included individuals, wide format)
+# (2) dat_long (data on all included individuals, long format)
+# (3) dat_cc_wide (data on complete cases only, wide format)
+# (4) dat_cc_long (data on complete cases only, long format)
 
 #dat_long contains 23795 observations on 18 variables. There are 4759 individuals and each individual has 
 #5 rows of data, one for each year of follow-up. The variables included in this dataframe are:
@@ -73,36 +77,21 @@ load(".../analysis_dat.RData")
 #measured at time k. 
 
 #-------------------------------------------------------------------------------
-# 1. Analysis on complete data (using an imputed dataset)
+# 1. Analysis on complete cases
 #-------------------------------------------------------------------------------
-#Describe data that's prepared in MI-gFormulaImpute-200 (workspace should include
-# two datasets, one in long format and one in wide)
-
-#Impute data using mice
-impdata<-mice(dat_wide, defaultMethod = c("norm.predict", "logreg", "polyreg", 
-                                          "polr"), m=1, seed=24042023)
-
-#Extract imputed data set 1 (wide format for gFormulaMI package)
-imputed_data<-complete(impdata, action="long", include=FALSE)
-imputed_dat1_wide<-imputed_data[imputed_data$.imp==1,]
-
-#Convert imputed data set 1 to long format (for gfoRmula package)
-imputed_dat1_long<-reshape(data = imputed_dat1_wide, direction = "long", 
-                      varying = 9:53, timevar = "fu_year"
-)
 
 #-------------------------------------------------------------------------------
 # 1a. Using gFormulaMI package
 
 #Remove id and imputation number from wide dataset
-imputed_dat1_wide = subset(imputed_dat1_wide, select = -c(.id, .imp))
+dat_cc_wide = subset(dat_cc_wide, select = -c(.id, .imp))
 
 #Start timer
 start.time<-proc.time()
 
 #Impute synthetic datasets under four treatment regimes
 set.seed(04111990)
-imps <- gFormulaImpute(data=imputed_dat1_wide, M=200, trtVars=c("trt_grp.1",
+imps <- gFormulaImpute(data=dat_cc_wide, M=200, trtVars=c("trt_grp.1",
                        "trt_grp.2","trt_grp.3","trt_grp.4","trt_grp.5"),
                         trtRegimes=list(c(1,1,1,1,1),c(2,2,2,2,2),c(3,3,3,3,3),
                         c(4,4,4,4,4)))
@@ -138,40 +127,9 @@ sqrt(results5[,4]/200)
 # 1b. Using gfoRmula package
 
 #------------------------------------------------------------
-#Formatting required to prepare dataset for use with gfoRmula
-
-#Convert variables to either factor or numeric
-imputed_dat1_long<-imputed_dat1_long %>%
-  mutate(
-    trt_grp = as.factor(trt_grp),
-    dmg_sex = as.numeric(as.character(dmg_sex)),
-    genotype_class = as.factor(genotype_class),
-    ethnicity = as.numeric(ethnicity),
-    Bfev = as.numeric(Bfev),
-    Bage = as.numeric(Bage),
-    slopes = as.numeric(slopes),
-    gli_percpredfev = as.numeric(gli_percpredfev),
-    lag_bmi_zscore = as.numeric(lag_bmi_zscore),
-    IVdays_cat = as.factor(IVdays_cat),
-    hospIV = as.numeric(as.character(hospIV)),
-    PI = as.numeric(as.character(PI)),
-    s05culturespeciespseudoaeruginos = as.numeric(as.character(s05culturespeciespseudoaeruginos)),
-    s05culturespeciesstaph = as.numeric(as.character(s05culturespeciesstaph)),
-    ntm_combined = as.numeric(as.character(ntm_combined))
-  )
-
-#Order data
-imputed_dat1_long<-imputed_dat1_long[order(imputed_dat1_long$.id,imputed_dat1_long$fu_year),]
-
-#Time variable must start from 0 and increase in increments of 1
-imputed_dat1_long$fu_year<-imputed_dat1_long$fu_year-1
-
-#Create lag_fev
-imputed_dat1_long<- imputed_dat1_long %>% group_by(.id) %>% mutate(lag_fev = dplyr::lag(gli_percpredfev, n = 1, default = NA))
-imputed_dat1_long$lag_fev[imputed_dat1_long$fu_year==1]<-imputed_dat1_long$Bfev[imputed_dat1_long$fu_year==1]
-
-#Dataset must be set as data.table
-setDT(imputed_dat1_long)
+#gfoRmula package required time variable to start at 0
+dat_cc_long$fu_year<-dat_cc_long$fu_year-1
+setDT(dat_cc_long)
 
 #----------------------
 #Analysis
@@ -180,7 +138,7 @@ setDT(imputed_dat1_long)
 start.time<-proc.time()
 
 #Define inputs for gfoRmula
-id<-".id"
+id<-"id"
 time_name<-"fu_year"
 covnames<-c("trt_grp","s05culturespeciespseudoaeruginos", "s05culturespeciesstaph",
             "hospIV", "IVdays_cat", "PI", "ntm_combined",
@@ -194,7 +152,6 @@ histvars<-list(c("trt_grp","s05culturespeciespseudoaeruginos", "s05culturespecie
                  "hospIV",  "IVdays_cat", "PI", "ntm_combined",
                  "lag_fev", "lag_bmi_zscore"))
 
-#Covariate models
 covparams<-list(covmodels=c(
   
   trt_grp~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
@@ -203,10 +160,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   s05culturespeciespseudoaeruginos~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -214,10 +171,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   s05culturespeciesstaph~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -225,10 +182,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   hospIV~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -236,10 +193,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   IVdays_cat~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -247,10 +204,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   PI~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -258,10 +215,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   ntm_combined~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -269,10 +226,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   lag_fev~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -280,10 +237,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   lag_bmi_zscore~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -291,13 +248,12 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined
   
 ))
-
 #Define interventions
 intvars <- list("trt_grp", "trt_grp", "trt_grp", "trt_grp")
 int_descript <- c("DNase only", "HS only", "No treatment", "HS & DNase")
@@ -318,7 +274,7 @@ ymodel<-gli_percpredfev~as.factor(trt_grp)+as.factor(lag1_trt_grp)+as.factor(lag
   ntm_combined+lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year
 
 #Use gformula_continuous_eof
-gform <- gformula_continuous_eof(obs_data = imputed_dat1_long,
+gform <- gformula_continuous_eof(obs_data = dat_cc_long,
                                  id = id,
                                  time_name = time_name,
                                  basecovs = basecovs,
@@ -332,15 +288,64 @@ gform <- gformula_continuous_eof(obs_data = imputed_dat1_long,
                                  int_descript = int_descript,
                                  histories = histories, histvars = histvars,
                                  nsimul = nsimul, 
-                                 nsamples=10,
-                                 boot_diag=TRUE,
+                                 sim_data_b = TRUE,
                                  seed = 04111990)
 
-#Display results
-gform
+#Calculate effect estimates
+EY45<-mean(gform$sim_data$'HS & DNase'$Ey[gform$sim_data$'HS & DNase'$fu_year==4], na.rm=TRUE)
+EY15<-mean(gform$sim_data$'DNase only'$Ey[gform$sim_data$'DNase only'$fu_year==4], na.rm=TRUE)
+CE43.5<-EY45-EY15
+
+EY44<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==4], na.rm=TRUE)
+EY14<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==4], na.rm=TRUE)
+CE43.4<-EY44-EY14
+
+EY43<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==3], na.rm=TRUE)
+EY13<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==3], na.rm=TRUE)
+CE43.3<-EY43-EY13
+
+EY42<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==2], na.rm=TRUE)
+EY12<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==2], na.rm=TRUE)
+CE43.2<-EY42-EY12
+
+EY41<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==1], na.rm=TRUE)
+EY11<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==1], na.rm=TRUE)
+CE43.1<-EY41-EY11
+
+#Save estimated outcomes at each time point for MCSE estimates
+Y.DNHS.5 <- gform$sim_data$'HS & DNase'$Ey[gform$sim_data$'HS & DNase'$fu_year==4]
+Y.DNHS.4 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==4]
+Y.DNHS.3 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==3]
+Y.DNHS.2 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==2]
+Y.DNHS.1 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==1]
+
+Y.DN.5 <- gform$sim_data$'DNase only'$Ey[gform$sim_data$'DNase only'$fu_year==4]
+Y.DN.4 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==4]
+Y.DN.3 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==3]
+Y.DN.2 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==2]
+Y.DN.1 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==1]
+
+#bootstrap.R runs the above analysis 1000 times in a loop to obtain 
+#bootstrap estimates of the SE
+source(".../bootstrap.R")
 
 #End timer
 proc.time()-start.time
+
+#bootstrap.R results in 5 vectors: ce43.1, ce43.2, ce43.3, ce43.4, ce43.5
+#each vector contains 1000 bootstrap estimates of the treatment effects for years 1-5
+c(CE43.1, CE43.1-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.1),CE43.1+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.1))
+c(CE43.2, CE43.2-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.2),CE43.2+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.2))
+c(CE43.3, CE43.3-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.3),CE43.3+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.3))
+c(CE43.4, CE43.4-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.4),CE43.4+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.4))
+c(CE43.5, CE43.5-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.5),CE43.5+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.5))
+
+#calculate Monte-Carlo SE of difference in means assuming they are two independent samples
+sqrt(var(Y.DNHS.5)/nsimul + var(Y.DN.5)/nsimul)
+sqrt(var(Y.DNHS.4)/nsimul + var(Y.DN.4)/nsimul)
+sqrt(var(Y.DNHS.3)/nsimul + var(Y.DN.3)/nsimul)
+sqrt(var(Y.DNHS.2)/nsimul + var(Y.DN.2)/nsimul)
+sqrt(var(Y.DNHS.1)/nsimul + var(Y.DN.1)/nsimul)
 
 #-------------------------------------------------------------------------------
 # 2. Analysis on data with missingness 
@@ -391,12 +396,12 @@ sqrt(results4[,4]/200)
 sqrt(results5[,4]/200)
 
 #-------------------------------------------------------------------------------
-# 2b. Complete cases using gfoRmula
+# 2b. Complete cases analysis using gfoRmula
 
 
 #------------------------------------------------------------
-#Formatting required to prepare dataset for use with gfoRmula
-dat_long$fu_year<-dat_long$fu_year-1
+#gfoRmula package required time variable to start at 0
+dat_long$fu_year<-dat_cc_long$fu_year-1
 setDT(dat_long)
 
 #----------------------
@@ -406,7 +411,7 @@ setDT(dat_long)
 start.time<-proc.time()
 
 #Define inputs for gfoRmula
-id<-"patient_id"
+id<-"id"
 time_name<-"fu_year"
 covnames<-c("trt_grp","s05culturespeciespseudoaeruginos", "s05culturespeciesstaph",
             "hospIV", "IVdays_cat", "PI", "ntm_combined",
@@ -420,7 +425,6 @@ histvars<-list(c("trt_grp","s05culturespeciespseudoaeruginos", "s05culturespecie
                  "hospIV",  "IVdays_cat", "PI", "ntm_combined",
                  "lag_fev", "lag_bmi_zscore"))
 
-#Covariate models
 covparams<-list(covmodels=c(
   
   trt_grp~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
@@ -429,10 +433,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   s05culturespeciespseudoaeruginos~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -440,10 +444,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   s05culturespeciesstaph~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -451,10 +455,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   hospIV~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -462,10 +466,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   IVdays_cat~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -473,10 +477,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   PI~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -484,10 +488,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   ntm_combined~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -495,10 +499,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   lag_fev~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -506,10 +510,10 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag_bmi_zscore+lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year,
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined,
   
   lag_bmi_zscore~as.factor(lag1_trt_grp)+as.factor(lag2_trt_grp)+as.factor(lag3_trt_grp)+as.factor(lag4_trt_grp)+
     as.factor(genotype_class)+as.factor(ethnicity)+Bfev+Bage+dmg_sex+slopes+
@@ -517,13 +521,12 @@ covparams<-list(covmodels=c(
     lag1_s05culturespeciesstaph+lag2_s05culturespeciesstaph+lag3_s05culturespeciesstaph+lag4_s05culturespeciesstaph+
     lag1_hospIV+lag2_hospIV+lag3_hospIV+lag4_hospIV+
     as.factor(lag1_IVdays_cat)+as.factor(lag2_IVdays_cat)+as.factor(lag3_IVdays_cat)+as.factor(lag4_IVdays_cat)+
-    lag_fev+lag2_lag_fev+lag3_lag_fev+lag4_lag_fev+
-    lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+lag4_lag_bmi_zscore+
+    lag_fev+lag1_lag_fev+lag2_lag_fev+lag3_lag_fev+
+    lag1_lag_bmi_zscore+lag2_lag_bmi_zscore+lag3_lag_bmi_zscore+
     lag1_PI+lag2_PI+lag3_PI+lag4_PI+
-    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year
+    lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined
   
 ))
-
 #Define interventions
 intvars <- list("trt_grp", "trt_grp", "trt_grp", "trt_grp")
 int_descript <- c("DNase only", "HS only", "No treatment", "HS & DNase")
@@ -544,7 +547,7 @@ ymodel<-gli_percpredfev~as.factor(trt_grp)+as.factor(lag1_trt_grp)+as.factor(lag
   ntm_combined+lag1_ntm_combined+lag2_ntm_combined+lag3_ntm_combined+lag4_ntm_combined+fu_year
 
 #Use gformula_continuous_eof
-gform <- gformula_continuous_eof(obs_data = dat_long,
+gform <- gformula_continuous_eof(obs_data = dat_cc_long,
                                  id = id,
                                  time_name = time_name,
                                  basecovs = basecovs,
@@ -558,12 +561,61 @@ gform <- gformula_continuous_eof(obs_data = dat_long,
                                  int_descript = int_descript,
                                  histories = histories, histvars = histvars,
                                  nsimul = nsimul, 
-                                 nsamples=10,
-                                 boot_diag=TRUE,
+                                 sim_data_b = TRUE,
                                  seed = 04111990)
 
-#Display results
-gform
+#Calculate effect estimates
+EY45<-mean(gform$sim_data$'HS & DNase'$Ey[gform$sim_data$'HS & DNase'$fu_year==4], na.rm=TRUE)
+EY15<-mean(gform$sim_data$'DNase only'$Ey[gform$sim_data$'DNase only'$fu_year==4], na.rm=TRUE)
+CE43.5<-EY45-EY15
+
+EY44<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==4], na.rm=TRUE)
+EY14<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==4], na.rm=TRUE)
+CE43.4<-EY44-EY14
+
+EY43<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==3], na.rm=TRUE)
+EY13<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==3], na.rm=TRUE)
+CE43.3<-EY43-EY13
+
+EY42<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==2], na.rm=TRUE)
+EY12<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==2], na.rm=TRUE)
+CE43.2<-EY42-EY12
+
+EY41<-mean(gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==1], na.rm=TRUE)
+EY11<-mean(gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==1], na.rm=TRUE)
+CE43.1<-EY41-EY11
+
+#Save estimated outcomes at each time point for MCSE estimates
+Y.DNHS.5 <- gform$sim_data$'HS & DNase'$Ey[gform$sim_data$'HS & DNase'$fu_year==4]
+Y.DNHS.4 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==4]
+Y.DNHS.3 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==3]
+Y.DNHS.2 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==2]
+Y.DNHS.1 <- gform$sim_data$'HS & DNase'$lag_fev[gform$sim_data$'HS & DNase'$fu_year==1]
+
+Y.DN.5 <- gform$sim_data$'DNase only'$Ey[gform$sim_data$'DNase only'$fu_year==4]
+Y.DN.4 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==4]
+Y.DN.3 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==3]
+Y.DN.2 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==2]
+Y.DN.1 <- gform$sim_data$'DNase only'$lag_fev[gform$sim_data$'DNase only'$fu_year==1]
+
+#bootstrap.R runs the above analysis 1000 times in a loop to obtain 
+#bootstrap estimates of the SE
+source(".../bootstrap.R")
 
 #End timer
 proc.time()-start.time
+
+#bootstrap.R results in 5 vectors: ce43.1, ce43.2, ce43.3, ce43.4, ce43.5
+#each vector contains 1000 bootstrap estimates of the treatment effects for years 1-5
+c(CE43.1, CE43.1-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.1),CE43.1+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.1))
+c(CE43.2, CE43.2-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.2),CE43.2+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.2))
+c(CE43.3, CE43.3-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.3),CE43.3+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.3))
+c(CE43.4, CE43.4-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.4),CE43.4+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.4))
+c(CE43.5, CE43.5-qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.5),CE43.5+qnorm(p=.05/2, lower.tail=FALSE)*sd(ce43.5))
+
+#calculate Monte-Carlo SE of difference in means assuming they are two independent samples
+sqrt(var(Y.DNHS.5)/nsimul + var(Y.DN.5)/nsimul)
+sqrt(var(Y.DNHS.4)/nsimul + var(Y.DN.4)/nsimul)
+sqrt(var(Y.DNHS.3)/nsimul + var(Y.DN.3)/nsimul)
+sqrt(var(Y.DNHS.2)/nsimul + var(Y.DN.2)/nsimul)
+sqrt(var(Y.DNHS.1)/nsimul + var(Y.DN.1)/nsimul)
